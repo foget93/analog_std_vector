@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <new>
 #include <utility>
+#include <memory>
 
 template <typename T>
 class RawMemory {
@@ -67,7 +68,7 @@ private:
 
     T* buffer_ = nullptr;
     size_t capacity_ = 0;
-};
+};// RawMemory
 
 template <typename T>
 class Vector {
@@ -83,18 +84,19 @@ public:
             : data_(size)
             , size_(size)  //
         {
-            size_t i = 0;
-            try {
-                for (; i != size; ++i) {
-                    new (data_ + i) T();
-                    //new (buf) T(elem);
-                }
-            } catch (...) {
-                DestroyN(data_.GetAddress(), i);
-                // Деструктор поля data_ освободит сырую память
-                // автоматически при перевыбрасывании исключения
-                throw;
-            }
+//            size_t i = 0;
+//            try {
+//                for (; i != size; ++i) {
+//                    new (data_ + i) T();
+//                    //new (buf) T(elem);
+//                }
+//            } catch (...) {
+//                DestroyN(data_.GetAddress(), i);
+//                // Деструктор поля data_ освободит сырую память
+//                // автоматически при перевыбрасывании исключения
+//                throw;
+//            }
+            std::uninitialized_value_construct_n(data_.GetAddress(), size);
         }
 //    explicit Vector(size_t size)
 //        : data_(Allocate(size))
@@ -146,16 +148,17 @@ public:
         : data_(other.size_)
         , size_(other.size_)  //
     {
-        size_t i = 0;
-        try {
-            for (; i != other.size_; ++i) {
-                CopyConstruct(data_ + i, other.data_[i]);
-            }
-        } catch (...) {
-            DestroyN(data_.GetAddress(), i);
-            //Deallocate(data_);
-            throw;
-        }
+//        size_t i = 0;
+//        try {
+//            for (; i != other.size_; ++i) {
+//                CopyConstruct(data_ + i, other.data_[i]);
+//            }
+//        } catch (...) {
+//            DestroyN(data_.GetAddress(), i);
+//            //Deallocate(data_);
+//            throw;
+//        }
+        std::uninitialized_copy_n(other.data_.GetAddress(), size_, data_.GetAddress());
 
     }
 /*
@@ -168,7 +171,8 @@ public:
 
 */
     ~Vector() {
-        DestroyN(data_.GetAddress(), size_);
+        //DestroyN(data_.GetAddress(), size_);
+        std::destroy_n(data_.GetAddress(), size_);
     }
 //    ~Vector() {
 //        DestroyN(data_, size_);
@@ -184,19 +188,38 @@ public:
         }
 
         RawMemory<T> new_data(new_capacity);// = Allocate(new_capacity);
-        size_t i = 0;
-        try {
-            for (; i != size_; ++i) {
-                CopyConstruct(new_data + i, data_[i]); // можно без гетадресс походу изза оператор +
-            }
-        } catch (...) {
-            DestroyN(new_data.GetAddress(), i);
-            throw;
+//        size_t i = 0;
+//        try {
+//            for (; i != size_; ++i) {
+//                CopyConstruct(new_data + i, data_[i]); // можно без гетадресс походу изза оператор +
+//            }
+//        } catch (...) {
+//            DestroyN(new_data.GetAddress(), i);
+//            throw;
+//        }
+
+//        DestroyN(data_.GetAddress(), size_);
+
+        // Конструируем элементы в new_data, копируя их из data_
+//        std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
+        //уместнее будет использовать перемещение
+        //std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
+
+        // constexpr оператор if Шаблоны std::is_copy_constructible_v и std::is_nothrow_move_constructible_v
+        //помогают узнать, есть ли у типа копирующий конструктор и noexcept-конструктор перемещения.
+        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+            //уместнее будет использовать перемещение
+            std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
+        } else {
+            // Конструируем элементы в new_data, копируя их из data_ если
+            std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
         }
 
-        DestroyN(data_.GetAddress(), size_);
-
+        // Разрушаем элементы в data_
+        std::destroy_n(data_.GetAddress(), size_);
+        // Избавляемся от старой сырой памяти, обменивая её на новую
         data_.Swap(new_data);
+        // При выходе из метода старая память будет возвращена в кучу
 //        data_ = new_data;
 //        capacity_ = new_capacity;
     }
@@ -264,6 +287,7 @@ private:
     RawMemory<T> data_;
     size_t size_ = 0;
 //    size_t capacity_ = 0;
+//    T*  data_ = nullptr;
 
 };
 /*
