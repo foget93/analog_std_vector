@@ -124,6 +124,10 @@ using namespace std;
 
 int main() {
     Test1();
+    Test2();
+    Test3();
+    Test4();
+
 //    cout << "std::vector"sv << endl;
 //    try {
 //        std::vector<C> v(10);
@@ -140,6 +144,7 @@ int main() {
 //        cout << "Exception"sv << endl;
 //        cout << "Objects:"sv << C::objects << endl;
 //    }
-    Test2();
-    //Test3();
+//    Test1();
+//    Test2();
+//    Test3();
 }

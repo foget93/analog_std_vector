@@ -12,7 +12,30 @@ public:
 
     explicit RawMemory(size_t capacity)
         : buffer_(Allocate(capacity))
-        , capacity_(capacity) {
+        , capacity_(capacity) {}
+
+    RawMemory(const RawMemory&) = delete;
+    RawMemory& operator=(const RawMemory& rhs) = delete;
+
+    RawMemory(RawMemory&& other) noexcept
+        : buffer_(Allocate(other.capacity_))
+        , capacity_(other.capacity_)
+    {
+        buffer_ = nullptr;
+        std::swap(buffer_, other.buffer_);
+    }
+//    RawMemory(RawMemory&& other) noexcept
+//        : buffer_(other.buffer_)
+//        , capacity_(other.capacity_)
+//    {
+//        other.buffer_ = nullptr;
+//        //std::swap(buffer_, other.buffer_);
+//    }
+
+    RawMemory& operator=(RawMemory&& rhs) noexcept {
+        RawMemory rhs_copy(std::move(rhs));
+        this->Swap(rhs_copy);
+        return *this;
     }
 
     ~RawMemory() {
@@ -74,7 +97,6 @@ template <typename T>
 class Vector {
 public:
     Vector() = default;
-
 /*
 Этот конструктор сначала выделяет в сырой памяти буфер, достаточный для хранения  элементов в количестве, равном size.
 Затем конструирует в сырой памяти элементы массива.
@@ -161,6 +183,56 @@ public:
         std::uninitialized_copy_n(other.data_.GetAddress(), size_, data_.GetAddress());
 
     }
+
+    Vector& operator=(const Vector& rhs) {
+        if (this != &rhs) {
+            if (size_ >= rhs.Size()) {
+                size_t delta = size_ - rhs.size_;
+                std::copy(rhs.data_.GetAddress(), rhs.data_.GetAddress() + rhs.size_, data_.GetAddress());
+                std::destroy_n(data_.GetAddress() + rhs.size_, delta);
+                size_ = rhs.size_;
+            }
+            else {
+                if (data_.Capacity() < rhs.size_) {
+                    Vector rhs_copy(rhs);
+                    Swap(rhs_copy);
+                }
+                else {
+
+                    size_t delta = rhs.size_ - size_;
+                    std::copy(rhs.data_.GetAddress(), rhs.data_.GetAddress() + size_, data_.GetAddress());
+                    std::uninitialized_copy_n(rhs.data_.GetAddress() + size_, delta, data_.GetAddress() + size_);
+                    size_ = rhs.size_;
+                }
+            }
+        }
+        return *this;
+    }
+
+    Vector(Vector&& other) noexcept
+//        : data_(std::move(other.data_))
+//        , size_(other.size_)
+    {
+        data_.Swap(other.data_);
+        size_ = other.size_;
+        other.size_ = 0;
+        //std::uninitialized_move_n(other.data_.GetAddress(), size_, data_.GetAddress());
+        //size_ = other.size_;
+    }
+
+    Vector& operator=(Vector&& rhs) noexcept {
+        if (this != &rhs) {
+            size_ = 0;
+            data_ = RawMemory<T>();
+            this->Swap(rhs);
+        }
+        return *this;
+    }
+
+    void Swap(Vector& other) noexcept {
+        data_.Swap(other.data_);
+        std::swap(size_, other.size_);
+    }
 /*
 Сначала необходимо вызвать деструкторы у size_ элементов массива, используя функцию DestroyN.
 Затем нужно освободить выделенную динамическую память, используя функцию Deallocate.
@@ -224,6 +296,51 @@ public:
 //        capacity_ = new_capacity;
     }
 
+    void Resize(size_t new_size) {
+        if (new_size == size_) {
+            return;
+        }
+
+        else if (size_ > new_size) {
+            std::destroy_n(data_.GetAddress() + new_size, size_ - new_size);
+        }
+        else {
+            Reserve(new_size);
+            std::uninitialized_value_construct_n(data_.GetAddress() + size_, new_size - size_);
+        }
+        size_ = new_size;
+    }
+
+    template <typename S>
+    void PushBack(S&& value) { //универсальная ссылка и вуаля
+        if (this->Capacity() > size_) {
+            new (data_ + size_) T(std::forward<S>(value));
+        }
+        else if (size_ == 0) {
+            Reserve(1);
+            new (data_.GetAddress()) T(std::forward<S>(value));
+        }
+        else {
+            RawMemory<T> new_data(size_ * 2);
+            new (new_data + size_) T(std::forward<S>(value));
+            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
+            }
+            else {
+                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
+            }
+            std::destroy_n(data_.GetAddress(), size_);
+            data_.Swap(new_data);
+        }
+        ++size_;
+    }
+
+    void PopBack() noexcept {
+        T* deleted = data_.GetAddress() + size_ - 1;
+        deleted->~T();
+        --size_;
+    }
+
     size_t Size() const noexcept {
         return size_;
     }
@@ -250,6 +367,12 @@ public:
     }
 
 private: //methods
+    //static:
+//    alignas(Cat) char buf[sizeof(Cat)];
+//    Cat* cat = new (&buf[0]) Cat("Luna"s, 1);
+//    cat->SayHello();
+//    cat->~Cat();
+
     // Выделяет сырую память под n элементов и возвращает указатель на неё
     // operator new вернет void*
     //    void* buf_dynamic = operator new(sizeof(Cat)); <---пример
