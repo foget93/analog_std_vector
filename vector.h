@@ -4,6 +4,7 @@
 #include <new>
 #include <utility>
 #include <memory>
+#include <algorithm>
 
 template <typename T>
 class RawMemory {
@@ -309,6 +310,28 @@ public:
             std::uninitialized_value_construct_n(data_.GetAddress() + size_, new_size - size_);
         }
         size_ = new_size;
+    }
+
+    template <typename... Args>
+    T& EmplaceBack(Args&&... args) {
+        if (size_ == Capacity()) {
+            RawMemory<T> new_data((size_ == 0) ? 1 : 2 * size_);
+
+            new (new_data.GetAddress() + size_) T(std::forward<Args>(args)...);
+
+            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
+            } else {
+                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
+            }
+            std::destroy_n(data_.GetAddress(), size_);
+            data_.Swap(new_data);
+
+        } else {
+            new (data_.GetAddress() + size_) T(std::forward<Args>(args)...);
+        }
+        ++size_;
+        return *(data_.GetAddress() + size_ - 1);
     }
 
     template <typename S>
