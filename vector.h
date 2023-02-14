@@ -97,6 +97,29 @@ private:
 template <typename T>
 class Vector {
 public:
+    using iterator = T*;
+    using const_iterator = const T*;
+
+    iterator begin() noexcept {
+        return data_.GetAddress();
+    }
+    iterator end() noexcept {
+        return data_.GetAddress() + size_;
+    }
+    const_iterator begin() const noexcept {
+        return data_.GetAddress();
+    }
+    const_iterator end() const noexcept {
+        return data_.GetAddress() + size_;
+    }
+    const_iterator cbegin() const noexcept {
+        return data_.GetAddress();
+    }
+    const_iterator cend() const noexcept {
+        return data_.GetAddress() + size_;
+    }
+
+
     Vector() = default;
 /*
 Этот конструктор сначала выделяет в сырой памяти буфер, достаточный для хранения  элементов в количестве, равном size.
@@ -336,27 +359,120 @@ public:
 
     template <typename S>
     void PushBack(S&& value) { //универсальная ссылка и вуаля
-        if (this->Capacity() > size_) {
-            new (data_ + size_) T(std::forward<S>(value));
-        }
-        else if (size_ == 0) {
-            Reserve(1);
-            new (data_.GetAddress()) T(std::forward<S>(value));
-        }
-        else {
-            RawMemory<T> new_data(size_ * 2);
-            new (new_data + size_) T(std::forward<S>(value));
-            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
-            }
-            else {
-                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
-            }
-            std::destroy_n(data_.GetAddress(), size_);
-            data_.Swap(new_data);
-        }
-        ++size_;
+        EmplaceBack(std::forward<S>(value));
+//        if (this->Capacity() > size_) {
+//            new (data_ + size_) T(std::forward<S>(value));
+//        }
+//        else if (size_ == 0) {
+//            Reserve(1);
+//            new (data_.GetAddress()) T(std::forward<S>(value));
+//        }
+//        else {
+//            RawMemory<T> new_data(size_ * 2);
+//            new (new_data + size_) T(std::forward<S>(value));
+//            if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+//                std::uninitialized_move_n(data_.GetAddress(), size_, new_data.GetAddress());
+//            }
+//            else {
+//                std::uninitialized_copy_n(data_.GetAddress(), size_, new_data.GetAddress());
+//            }
+//            std::destroy_n(data_.GetAddress(), size_);
+//            data_.Swap(new_data);
+//        }
+//        ++size_;
     }
+
+    template <typename... Args>
+    iterator Emplace(const_iterator pos, Args&&... args) {
+        assert(begin() <= pos && pos <= end());
+
+        if (pos == cend()) {
+            EmplaceBack(std::forward<Args>(args)...);
+            return end() - 1;
+        }
+
+        else {
+            const size_t left_delta = pos - begin();
+
+            if (Capacity() > size_) {
+
+                T temp = T(std::forward<Args>(args)...);
+                std::uninitialized_move_n(end() - 1, 1, end());
+                ++size_;
+                std::move_backward(begin() + left_delta, end() - 2, end() - 1);
+                iterator it_pos = begin() + left_delta;
+                *it_pos = std::move(temp);
+                return it_pos;
+            }
+
+            else {
+                RawMemory<T> new_data(size_ * 2);
+                iterator it_pos_new_data = new_data.GetAddress() + left_delta;
+                new(it_pos_new_data) T(std::forward<Args>(args)...);
+                try {
+                    if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+                        std::uninitialized_move_n(data_.GetAddress(), left_delta, new_data.GetAddress());
+                    }
+                    else {
+                        std::uninitialized_copy_n(data_.GetAddress(), left_delta, new_data.GetAddress());
+                    }
+                }
+                catch (...) {
+                    std::destroy_n(new_data + left_delta, 1);
+                    new_data.~RawMemory();
+                    throw;
+                }
+
+                try {
+                    if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+                        std::uninitialized_move_n(data_.GetAddress() + left_delta, size_ - left_delta, new_data.GetAddress() + left_delta + 1);
+                    }
+                    else {
+                        std::uninitialized_copy_n(data_.GetAddress() + left_delta, size_ - left_delta, new_data.GetAddress() + left_delta + 1);
+                    }
+
+                }
+                catch (...) {
+                    //std::destroy_n(new_data, left_delta);
+                    new_data.~RawMemory();
+                    throw;
+                }
+
+                std::destroy_n(data_.GetAddress(), size_);
+                data_.Swap(new_data);
+                ++size_;
+
+                iterator it_pos = begin() + left_delta;
+                return it_pos;
+            }
+        }
+    }
+
+    iterator Erase(const_iterator pos) /*noexcept(std::is_nothrow_move_assignable_v<T>)*/ {
+        assert(begin() <= pos && pos <= end());
+        iterator new_pos = begin() + (pos - cbegin());
+        std::move(new_pos + 1, end(), new_pos);
+        std::destroy_n(end() - 1, 1);
+        --size_;
+        return new_pos;
+    }
+
+    iterator Insert(const_iterator pos, const T& value) {
+        return Emplace(pos, value);
+    }
+
+    iterator Insert(const_iterator pos, T&& value) {
+        return Emplace(pos, std::move(value));
+    }
+
+/* //или один с forward ссылкой? ( вопрос ревьюэру, пушбек так же? )
+    template <typename S>
+    void Insert(const_iterator pos, S&& value) {
+        return Emplace(pos, std::forward<S>(value));
+    }
+*/
+
+
 
     void PopBack() noexcept {
         T* deleted = data_.GetAddress() + size_ - 1;
